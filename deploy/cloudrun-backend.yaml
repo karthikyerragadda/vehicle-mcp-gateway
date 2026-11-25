@@ -1,0 +1,73 @@
+# Google Cloud Run service for the simulated vehicle BACKEND.
+#
+# This is a deployment config, not a running deployment. Nothing is live
+# until someone runs the steps below in their own Google Cloud project.
+#
+# Replace the placeholders first: PROJECT_ID, REGION (e.g. europe-west3).
+#
+# One-time setup (run from the repository root):
+#   1. Create a Docker repository and build + push the image with Cloud Build:
+#        gcloud artifacts repositories create vehicle-mcp --repository-format=docker --location=REGION
+#        gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT_ID/vehicle-mcp/vehicle-mcp-gateway:latest
+#   2. Store the backend service key in Secret Manager (never in this file):
+#        python -c "import secrets; print(secrets.token_urlsafe(32), end='')" \
+#          | gcloud secrets create backend-service-key --data-file=-
+#   3. Let the service's runtime account read it (by default the Compute
+#      Engine default service account, PROJECT_NUMBER-compute@developer.gserviceaccount.com):
+#        gcloud secrets add-iam-policy-binding backend-service-key \
+#          --member=serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com \
+#          --role=roles/secretmanager.secretAccessor
+#   4. Deploy, and allow the gateway to reach it over HTTPS. Requests are
+#      still rejected unless they carry the X-Service-Key header:
+#        gcloud run services replace deploy/cloudrun-backend.yaml --region=REGION
+#        gcloud run services add-iam-policy-binding vehicle-backend --region=REGION \
+#          --member=allUsers --role=roles/run.invoker
+#   Then copy the service URL it prints into deploy/cloudrun-gateway.yaml.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: vehicle-backend
+spec:
+  template:
+    metadata:
+      annotations:
+        # Exactly one instance: the fleet lives in process memory, so a second
+        # instance would hold a different copy of the cars.
+        autoscaling.knative.dev/maxScale: "1"
+    spec:
+      containers:
+        # The same image as the gateway; SERVICE picks which server starts.
+        - image: REGION-docker.pkg.dev/PROJECT_ID/vehicle-mcp/vehicle-mcp-gateway:latest
+          ports:
+            # Cloud Run sends traffic to this port and sets the PORT
+            # environment variable to it, which the container's start command reads.
+            - name: http1
+              containerPort: 8001
+          env:
+            - name: SERVICE
+              value: backend
+            - name: LOG_LEVEL
+              value: INFO
+            # Read from Secret Manager when the instance starts.
+            - name: BACKEND_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-service-key
+                  key: latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # Cloud Run ignores the Dockerfile's HEALTHCHECK; these probes replace it.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 2
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 30

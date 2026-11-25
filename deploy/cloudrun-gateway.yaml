@@ -1,0 +1,79 @@
+# Google Cloud Run service for the MCP GATEWAY.
+#
+# This is a deployment config, not a running deployment. Nothing is live
+# until someone runs the steps below in their own Google Cloud project.
+#
+# Deploy the backend first (see deploy/cloudrun-backend.yaml), then:
+#   1. Replace PROJECT_ID, REGION and BACKEND_URL below.
+#   2. Store the client token in Secret Manager and let the runtime account read it:
+#        python -c "import secrets; print(secrets.token_urlsafe(32), end='')" \
+#          | gcloud secrets create mcp-client-token --data-file=-
+#        gcloud secrets add-iam-policy-binding mcp-client-token \
+#          --member=serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com \
+#          --role=roles/secretmanager.secretAccessor
+#   3. Deploy, and allow AI clients to reach it over HTTPS. Every request
+#      still needs "Authorization: Bearer <mcp-client-token>":
+#        gcloud run services replace deploy/cloudrun-gateway.yaml --region=REGION
+#        gcloud run services add-iam-policy-binding vehicle-mcp-gateway --region=REGION \
+#          --member=allUsers --role=roles/run.invoker
+#   The MCP endpoint is then  https://<gateway service URL>/mcp
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: vehicle-mcp-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        # Exactly one instance. MCP sessions over streamable HTTP, and the
+        # encryption key for the unlock confirmation's round trip, live in
+        # process memory. A second instance would not know a session started
+        # on the first one.
+        autoscaling.knative.dev/maxScale: "1"
+    spec:
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/vehicle-mcp/vehicle-mcp-gateway:latest
+          ports:
+            # Cloud Run sets the PORT environment variable to this value; the
+            # gateway reads PORT from its settings.
+            - name: http1
+              containerPort: 8000
+          env:
+            - name: SERVICE
+              value: gateway
+            - name: LOG_LEVEL
+              value: INFO
+            - name: BACKEND_TIMEOUT_S
+              value: "5"
+            # The backend's Cloud Run URL, printed when you deployed it.
+            - name: BACKEND_URL
+              value: https://REPLACE-WITH-BACKEND-SERVICE-URL
+            # Two separate secrets, both from Secret Manager.
+            - name: BACKEND_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-service-key
+                  key: latest
+            - name: MCP_CLIENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-client-token
+                  key: latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # Cloud Run ignores the Dockerfile's HEALTHCHECK; these probes replace it.
+          # /health is the one gateway path that needs no bearer token.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 2
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
