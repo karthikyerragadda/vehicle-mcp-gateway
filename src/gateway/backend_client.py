@@ -70,6 +70,16 @@ class BackendClient:
             "GET", f"/vehicles/{vin}/trips", vin=vin, params={"limit": limit}
         )
 
+    async def set_climate(self, vin: str, target_celsius: float) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/vehicles/{vin}/climate", vin=vin, json={"target_celsius": target_celsius}
+        )
+
+    async def send_command(self, vin: str, command: str) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/vehicles/{vin}/commands", vin=vin, json={"command": command}
+        )
+
     # --- The shared request + error-mapping logic -----------------------------------
 
     async def _request(

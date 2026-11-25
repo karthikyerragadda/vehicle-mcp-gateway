@@ -42,6 +42,19 @@ TripLimit = Annotated[
     Field(ge=1, le=20, description="How many of the most recent trips to return (1-20)."),
 ]
 
+ClimateTarget = Annotated[
+    float,
+    Field(ge=16.0, le=28.0, description="Target cabin temperature in °C (16.0-28.0)."),
+]
+
+RemoteCommand = Annotated[
+    Literal["lock", "unlock", "flash_lights"],
+    Field(
+        description="lock or unlock the doors, or flash_lights to help find the car. "
+        "unlock asks the human user for confirmation before anything is sent."
+    ),
+]
+
 
 # --- Output models ----------------------------------------------------------------
 
@@ -98,3 +111,35 @@ class Trip(BaseModel):
 class TripHistory(BaseModel):
     vin: str
     trips: list[Trip] = Field(description="Most recent trip first.")
+
+
+class ClimateState(BaseModel):
+    vin: str
+    climate_target_celsius: float
+    cabin_temp_celsius: float
+
+
+class CommandReceipt(BaseModel):
+    """Proof that the backend executed a remote command."""
+
+    command_id: str
+    vin: str
+    command: Literal["lock", "unlock", "flash_lights"]
+    status: Literal["executed"]
+    executed_at: datetime
+
+
+# --- Confirmation form ------------------------------------------------------------
+
+
+class UnlockConfirmation(BaseModel):
+    """The form the MCP client shows to the HUMAN when the model asks to unlock.
+
+    Elicitation forms may only contain flat, primitive fields (the MCP spec
+    allows strings, numbers, booleans and enums), so this is a single checkbox.
+    """
+
+    confirm: bool = Field(
+        title="Unlock this vehicle",
+        description="Tick to allow the doors to be unlocked remotely.",
+    )
