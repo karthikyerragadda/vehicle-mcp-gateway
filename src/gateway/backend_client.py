@@ -16,6 +16,7 @@ tells it exactly what to do next. Full details still go to the server log.
 import logging
 from typing import Any
 
+import anyio
 import httpx
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -93,9 +94,16 @@ class BackendClient:
     ) -> Any:
         # Step 1: Send the request. Network-level failures (timeout, refused
         #         connection, DNS) raise here, before any status code exists.
+        #
+        #         Why both an httpx timeout AND anyio.fail_after? httpx's timeout
+        #         applies to each phase separately (connect, each read, ...), so
+        #         a backend that trickles bytes slowly could take far longer than
+        #         5s in total. fail_after puts one hard deadline on the whole
+        #         request, which is what "respond within 5s" promises.
         try:
-            response = await self._http.request(method, path, params=params, json=json)
-        except httpx.TimeoutException:
+            with anyio.fail_after(self._timeout_s):
+                response = await self._http.request(method, path, params=params, json=json)
+        except (httpx.TimeoutException, TimeoutError):
             logger.warning("backend timeout after %ss: %s %s", self._timeout_s, method, path)
             raise BackendError(
                 f"Vehicle backend did not respond within {self._timeout_s:g}s. Try again later."

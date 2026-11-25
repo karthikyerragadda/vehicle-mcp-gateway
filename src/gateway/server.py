@@ -13,17 +13,27 @@ The one sensitive action, unlocking a car, needs approval from the HUMAN via
 MCP elicitation. See `confirm_unlock_with_user` below for how that works and
 why the model cannot skip it.
 
-A note on names: the spec for this project says "FastMCP". In version 2 of
-the official `mcp` SDK, FastMCP was renamed to `MCPServer`; it is the same
-high-level, decorator-based server.
+Two ways to run it (see `main()` at the bottom):
+
+- `--transport streamable-http` (default): an HTTP server at /mcp, protected by
+  a bearer token (`auth.py`). Used by Docker, App Runner and Claude Code.
+- `--transport stdio`: the client starts this process and talks over
+  stdin/stdout. Used by Claude Desktop locally. There is no network, so there
+  is no token either: whoever can start the process is trusted.
+
+A note on names: FastMCP, the high-level server from earlier SDK versions, was
+renamed to `MCPServer` in version 2 of the official `mcp` SDK. It is the same
+decorator-based server.
 """
 
+import argparse
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 import httpx
+import uvicorn
 from mcp.server.mcpserver import (
     AcceptedElicitation,
     Context,
@@ -34,9 +44,13 @@ from mcp.server.mcpserver import (
 )
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp
 
+from gateway.auth import BearerTokenMiddleware
 from gateway.backend_client import BackendClient
-from gateway.config import GatewaySettings
+from gateway.config import GatewaySettings, load_settings
 from gateway.schemas import (
     ClimateState,
     ClimateTarget,
@@ -169,6 +183,12 @@ def create_server(
         lifespan=lifespan,
     )
 
+    # Liveness probe for Docker / App Runner (HTTP transport only). It does not
+    # call the backend: it answers "is this process up?", nothing more.
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health(_request: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
     # Step 3: Register the tools. The docstring of each tool becomes its
     #         description, which is what the MODEL reads to decide when to use
     #         it, so the docstrings are written for the model.
@@ -255,3 +275,56 @@ def create_server(
         return CommandReceipt.model_validate(data)
 
     return mcp
+
+
+# --- Running the server ------------------------------------------------------------
+
+
+def create_http_app(settings: GatewaySettings, server: MCPServer, host: str) -> ASGIApp:
+    """Wrap the MCP server's HTTP app in the bearer-token check."""
+    # Step 1: Refuse to serve HTTP without a client token. Without it anyone who
+    #         can reach the port could drive the tools.
+    if not settings.mcp_client_token:
+        raise SystemExit(
+            "Gateway configuration error: MCP_CLIENT_TOKEN is required for the HTTP transport."
+        )
+
+    # Step 2: The SDK builds a Starlette app serving MCP at /mcp (plus /health).
+    #         Passing `host` lets the SDK switch on its DNS-rebinding protection
+    #         automatically when we only listen on localhost.
+    starlette_app = server.streamable_http_app(host=host)
+
+    # Step 3: Put the token check in front of everything.
+    return BearerTokenMiddleware(starlette_app, settings.mcp_client_token)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Command-line entry point: `python -m gateway.server [--transport ...]`."""
+    parser = argparse.ArgumentParser(description="Vehicle MCP gateway")
+    parser.add_argument(
+        "--transport", choices=["streamable-http", "stdio"], default="streamable-http"
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Interface to listen on (HTTP only). Use 0.0.0.0 inside a container.",
+    )
+    args = parser.parse_args(argv)
+
+    # Step 1: Load settings, exiting with a clear message if a secret is missing.
+    settings = load_settings()
+    logging.basicConfig(level=settings.log_level.upper())
+    server = create_server(settings)
+
+    # Step 2: Start the chosen transport.
+    if args.transport == "stdio":
+        # stdout carries the MCP messages, so nothing else may print to it;
+        # logging goes to stderr by default.
+        server.run("stdio")
+    else:
+        app = create_http_app(settings, server, host=args.host)
+        uvicorn.run(app, host=args.host, port=settings.port, log_level=settings.log_level.lower())
+
+
+if __name__ == "__main__":
+    main()

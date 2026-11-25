@@ -17,6 +17,10 @@ dependencies = [
     "httpx>=0.28",
 ]
 
+# `vehicle-mcp-gateway` command, so MCP client configs can start the server by name.
+[project.scripts]
+vehicle-mcp-gateway = "gateway.server:main"
+
 [project.optional-dependencies]
 # Tools needed only for development and CI.
 dev = [
