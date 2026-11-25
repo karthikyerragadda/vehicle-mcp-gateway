@@ -1,0 +1,36 @@
+# Runs both services locally: `docker compose up --build`
+# Then the gateway is at http://localhost:8000/mcp (Bearer token from .env).
+
+services:
+  # The simulated vehicle REST API.
+  backend:
+    build: .
+    image: vehicle-mcp-gateway:local
+    # Secrets and shared settings come from .env (copy .env.example first).
+    env_file: .env
+    environment:
+      SERVICE: backend
+      PORT: "8001"
+    # No `ports:` on purpose. The backend is reachable only from inside the
+    # compose network (by the gateway), never from the host. Holding the
+    # client token alone is not enough to reach it.
+    expose:
+      - "8001"
+
+  # The MCP gateway that AI clients connect to.
+  gateway:
+    build: .
+    image: vehicle-mcp-gateway:local
+    env_file: .env
+    environment:
+      SERVICE: gateway
+      PORT: "8000"
+      # Compose gives each service a DNS name equal to its service name.
+      BACKEND_URL: http://backend:8001
+    # Publish the gateway on the host's port 8000.
+    ports:
+      - "8000:8000"
+    # Wait until the backend's HEALTHCHECK passes before starting the gateway.
+    depends_on:
+      backend:
+        condition: service_healthy
