@@ -1,0 +1,49 @@
+# Project metadata and dependencies (PEP 621).
+[project]
+name = "vehicle-mcp-gateway"
+version = "0.1.0"
+description = "An MCP server that gives AI agents safe, typed access to a connected-vehicle REST backend."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    # The official MCP Python SDK. Pinned exactly because its API changes
+    # between versions (2.x renamed FastMCP to MCPServer, for example).
+    "mcp==2.3.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.6",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+# Tools needed only for development and CI.
+dev = [
+    "pytest>=8.3",
+    "anyio>=4.9",
+    "ruff>=0.8",
+]
+
+# Build backend: hatchling turns the two packages under src/ into an installable wheel.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/backend", "src/gateway"]
+
+# pytest: look for tests in tests/ and make `import backend` / `import gateway`
+# work without installing the package first.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# ruff: linting rules. E/F = pycodestyle + pyflakes, I = import sorting,
+# B = bugbear (likely bugs), UP = pyupgrade (modern syntax).
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

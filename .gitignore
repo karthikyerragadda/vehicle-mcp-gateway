@@ -1,0 +1,24 @@
+# Python bytecode and build output
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets: real values live in .env, which must never be committed.
+.env
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
